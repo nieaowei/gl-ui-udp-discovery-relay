@@ -7,6 +7,8 @@ const makefile = fs.readFileSync(path.join(root, 'Makefile'), 'utf8');
 assert.match(version, /^\d+\.\d+\.\d+$/);
 assert.equal(makefile.match(/^PKG_VERSION:=(.+)$/m)[1], version);
 assert.match(makefile, /^PKG_RELEASE:=\d+$/m);
+const view = fs.readFileSync(path.join(root, 'files/www/views/gl-sdk4-ui-udp-discovery-relay.common.js'), 'utf8');
+assert.equal(view.match(/var uiVersion = '([^']+)'/)[1], version);
 const ref = process.argv[2] || '';
 if (ref.startsWith('refs/tags/')) assert.equal(ref, 'refs/tags/v' + version);
 console.log('UI versions consistent:', version);
