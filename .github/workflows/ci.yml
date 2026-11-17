@@ -1,0 +1,18 @@
+name: Native UI checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - run: sudo apt-get update -qq && sudo apt-get install -y lua5.1
+      - name: Check production Lua syntax
+        run: |
+          luac5.1 -p files/usr/lib/oui-httpd/rpc/udp-discovery-relay
+          luac5.1 -p files/usr/share/gl-validator.d/udp-discovery-relay.lua
