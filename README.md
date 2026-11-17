@@ -32,6 +32,24 @@ make package/gl-ui-udp-discovery-relay/compile V=s
 npm test
 ```
 
-Core 仓库提供 [安装与验收](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/acceptance.md)、[防火墙与免 NAT](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/firewall.md) 和 [测试指南](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/testing.md)。其中的 `openwrt/gl-ui-udp-discovery-relay` 是本 UI 的可构建快照，使用 Core 仓库的 `scripts/sync-ui.sh /path/to/gl-ui-udp-discovery-relay` 同步。
+本仓库独立维护 UI 的源码、版本检查、RPC 测试、APK 构建与发布。Core 仓库不再存放 UI 快照，也不构建 UI 包。
+
+直接使用 SDK 的 APK v3 打包工具时：
+
+```sh
+sudo scripts/build-apk.sh /path/to/sdk
+scripts/test-apk.sh /path/to/sdk
+```
+
+输出为 `noarch` UI APK、校验和、许可证与构建来源记录。CI 验证 root 文件所有权，并在临时根目录检查 UI 安装、删除和依赖文件保留；测试不会执行固件 nginx/procd 钩子。分支提交上传 `gl-ui-noarch-apk` 构建产物，匹配版本的 tag 才触发独立 UI Release。
+
+RPC 契约测试使用已固定提交的 Core 配置模块；CI 将它检出到 `.core/`，只作为测试依赖，不放入 UI 安装包。也可指定已有 Core 源码：
+
+```sh
+lua5.1 scripts/test-rpc.lua . /path/to/udp-discovery-relay/openwrt/udp-discovery-relay/files/usr/lib/lua/udp-discovery-relay/config.lua
+node scripts/check-version.cjs
+```
+
+Core 仓库提供通用 [安装与验收](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/acceptance.md)、[防火墙与免 NAT](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/firewall.md) 和 [测试指南](https://github.com/nieaowei/udp-discovery-relay/blob/main/docs/testing.md)。
 
 布局预览只用于开发：将 `UDR_PREVIEW_VUE` 指向本地 Vue 2 的 `vue/dist/vue.js` 后运行 `node scripts/preview.cjs`。预览绑定 `127.0.0.1:5088`，明确使用 fixture 数据及近似组件，不进入安装包，也不替代 SDK4 环境验收。

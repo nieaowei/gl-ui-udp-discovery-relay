@@ -1,5 +1,10 @@
-name: Native UI checks
-on: [push, pull_request, workflow_dispatch]
+name: Native UI checks and package
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -7,12 +12,64 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Check out pinned Core configuration contract
+        uses: actions/checkout@v4
+        with:
+          repository: nieaowei/udp-discovery-relay
+          ref: 222a804d82d21bd6524e9d774dd57ab5d3eeda7c
+          path: .core
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: npm test
-      - run: sudo apt-get update -qq && sudo apt-get install -y lua5.1
-      - name: Check production Lua syntax
+      - run: node scripts/check-version.cjs '${{ github.ref }}'
+      - run: sudo apt-get update -qq && sudo apt-get install -y lua5.1 lua-cjson
+      - name: Production Lua syntax and RPC contract
         run: |
           luac5.1 -p files/usr/lib/oui-httpd/rpc/udp-discovery-relay
           luac5.1 -p files/usr/share/gl-validator.d/udp-discovery-relay.lua
+          lua5.1 scripts/test-rpc.lua . .core/openwrt/udp-discovery-relay/files/usr/lib/lua/udp-discovery-relay/config.lua
+  apk:
+    needs: test
+    runs-on: ubuntu-24.04
+    env:
+      SDK_URL: https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/openwrt-sdk-25.12.6-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+      SDK_SHA256: 1c04ac47bdfc361d6aab299eb520d570e368013dedcb8d29cf39dc7168ae642e
+      UDR_SDK_LABEL: OpenWrt 25.12.6 reference host packager; UI noarch
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y zstd
+      - name: Fetch verified SDK host tools
+        run: |
+          curl --fail --location --retry 3 "$SDK_URL" -o /tmp/sdk.tar.zst
+          printf '%s  /tmp/sdk.tar.zst\n' "$SDK_SHA256" | sha256sum -c -
+          mkdir /tmp/sdk
+          tar --zstd -xf /tmp/sdk.tar.zst -C /tmp/sdk --strip-components=1
+      - name: Package independent UI APK
+        run: sudo env SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" UDR_SDK_LABEL="$UDR_SDK_LABEL" scripts/build-apk.sh /tmp/sdk
+      - name: UI package ownership and dependency preservation
+        run: scripts/test-apk.sh /tmp/sdk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gl-ui-noarch-apk
+          path: dist/
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, apk]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: gl-ui-noarch-apk
+          path: dist
+      - name: Publish UI package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          printf '%s\n' 'Native GL.iNet SDK4 UI. Requires the independent udp-discovery-relay Core package and compatible SDK4 runtime. APK is unsigned; verify provenance and dependencies before installation.' > /tmp/ui-release-notes.md
+          gh release create "$RELEASE_TAG" dist/*.apk dist/*.sha256 dist/build-provenance.txt dist/LICENSE --title "$RELEASE_TAG" --notes-file /tmp/ui-release-notes.md

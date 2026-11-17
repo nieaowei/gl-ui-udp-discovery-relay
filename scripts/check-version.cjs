@@ -1,0 +1,12 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.resolve(__dirname, '..');
+const {version} = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const makefile = fs.readFileSync(path.join(root, 'Makefile'), 'utf8');
+assert.match(version, /^\d+\.\d+\.\d+$/);
+assert.equal(makefile.match(/^PKG_VERSION:=(.+)$/m)[1], version);
+assert.match(makefile, /^PKG_RELEASE:=\d+$/m);
+const ref = process.argv[2] || '';
+if (ref.startsWith('refs/tags/')) assert.equal(ref, 'refs/tags/v' + version);
+console.log('UI versions consistent:', version);
