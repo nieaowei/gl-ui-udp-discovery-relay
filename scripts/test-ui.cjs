@@ -13,8 +13,8 @@ function flatten(node) { return [node].concat(node && node.children ? node.child
 test('loads real settings, edits rules, saves revision and applies via fixed RPC',async()=>{
   const v=instance(), calls=[];
   v.rpc=async(method,args)=>{calls.push({method,args}); if(method==='get_config') return {settings:{enabled:true,log_level:'info',loop_protection:true,max_packet_size:1400,rules:[]},interfaces:['wan','lan'],revision:'a'.repeat(32)}; if(method==='set_config') return {revision:'b'.repeat(32),applied:true}; return {running:true,enabled:true};};
-  await v.loadConfig();assert.equal(v.dirty,false);v.add(true);assert.equal(v.settings.rules[0].port,53317);assert.deepEqual(v.settings.rules[0].network,[]);
-  v.settings.rules[0].network=['wan','lan'];assert.equal(v.dirty,true);await v.save(true);assert.equal(v.dirty,false);assert.equal(v.revision,'b'.repeat(32));assert(calls.some(c=>c.method==='set_config'&&c.args.apply));
+  await v.loadConfig();assert.equal(v.dirty,false);await v.add(true);assert.equal(v.draft.port,53317);assert.deepEqual(v.draft.network,[]);assert.equal(v.settings.rules.length,0);
+  v.draft.network=['wan','lan'];v.finishEdit();assert.equal(v.dirty,true);await v.save(true);assert.equal(v.dirty,false);assert.equal(v.revision,'b'.repeat(32));assert(calls.some(c=>c.method==='set_config'&&c.args.apply));
   const nodes=flatten(view.render.call(v,h));assert(nodes.some(n=>n&&n.tag==='gl-card'));assert(!nodes.some(n=>n&&n.tag==='iframe'));
 });
 test('RPC rejection preserves unsaved edits and exposes actual error',async()=>{
@@ -32,4 +32,34 @@ test('route leave and delete require confirmation, cancellation keeps rules',asy
 });
 test('authenticated SDK4 call uses sid and fixed module',async()=>{
  const v=instance();let call;global.window={$rpcRequest:async(...args)=>{call=args;return {success:true}}};await v.rpc('service',{action:'stop'});assert.deepEqual(call[1],['sid','udp-discovery-relay','service',{action:'stop'}]);delete global.window;
+});
+
+function configured() {
+ const v=instance();v.loaded=true;v.interfaces=['wan','lan','guest'];v.settings={enabled:true,log_level:'info',loop_protection:true,max_packet_size:1400,rules:[{id:'local',name:'LocalSend',enabled:true,protocol:'udp',port:53317,multicast:'224.0.0.167',direction:'bidirectional',network:['wan','lan'],input:[],output:[],log_level:'info'}]};v.original=JSON.stringify(v.settings);return v;
+}
+test('editing uses an isolated draft, cancellation keeps configuration and direction switches retain selections',async()=>{
+ const v=configured();await v.edit(0);v.draft.name='Changed';v.draft.network.push('guest');assert.equal(v.settings.rules[0].name,'LocalSend');assert.equal(v.dirty,false);assert.equal(v.hasChanges,true);
+ v.ask=async()=>false;assert.equal(await v.cancelEdit(),false);assert(v.draft);v.ask=async()=>true;assert.equal(await v.cancelEdit(),true);assert.equal(v.hasChanges,false);assert.deepEqual(v.settings.rules[0].network,['wan','lan']);
+ await v.edit(0);v.draft.direction='oneway';v.draft.input=['wan'];v.draft.output=['guest'];v.draft.direction='bidirectional';assert.deepEqual(v.draft.network,['wan','lan']);v.finishEdit();assert.deepEqual(v.settings.rules[0].input,[]);
+});
+test('invalid edits remain visible, valid one-way edits replace only their rule, save waits for editor completion',async()=>{
+ const v=configured();let calls=0;v.rpc=async()=>{calls++;return {}};await v.edit(0);v.draft.port=5353;v.draft.direction='oneway';v.draft.input=['wan'];v.draft.output=['wan'];v.finishEdit();assert(v.draftErrors.port);assert(v.draftErrors.output);assert.equal(v.settings.rules[0].port,53317);await v.save(true);assert.equal(calls,0);
+ v.draft.port=53318;v.draft.output=['lan'];v.finishEdit();assert.equal(v.draft,null);assert.equal(v.settings.rules.length,1);assert.equal(v.settings.rules[0].port,53318);assert.deepEqual(v.settings.rules[0].network,[]);assert(v.dirty);
+});
+test('new duplicate rule is rejected and discarding restores both global settings and rule drafts',async()=>{
+ const v=configured();await v.add(true);v.draft.network=['wan','lan'];v.finishEdit();assert(v.draftErrors.multicast);assert.equal(v.settings.rules.length,1);
+ v.settings.enabled=false;v.ask=async()=>true;await v.discardChanges();assert.equal(v.settings.enabled,true);assert.equal(v.draft,null);assert.equal(v.hasChanges,false);
+});
+test('route leave includes unsaved new rules and respects cancellation',async()=>{
+ const v=configured();await v.add(false);let next;v.ask=async()=>false;await view.beforeRouteLeave.call(v,{}, {},value=>next=value);await Promise.resolve();assert.equal(next,false);
+});
+test('clearing logs pauses auto refresh and ignores a request already in flight',async()=>{
+ const v=instance();let resolve;v.rpc=()=>new Promise(r=>resolve=r);const pending=v.loadLogs();assert(v.logPending);v.clearLogs();resolve({text:'late log'});await pending;assert.equal(v.logText,'');assert.equal(v.logAuto,false);assert.equal(v.logPending,false);
+});
+test('metrics use readable units without converting missing data or zero to fake values',()=>{
+ const v=instance();assert.equal(v.metric('rss_bytes',1048576),'1.0 MiB');assert.equal(v.metric('uptime_seconds',3661),'1h 1m');assert.equal(v.metric('received',0),'0');assert.equal(v.metric('received',undefined),'—');
+});
+test('tabs support arrow keys and configured unavailable networks remain selectable',async()=>{
+ const v=configured();const tabs=[0,1,2].map(()=>({focus(){this.focused=true}}));v.tabKey({key:'ArrowRight',preventDefault(){},currentTarget:{parentNode:{querySelectorAll(){return tabs}}}},0);assert.equal(v.active,'rules');assert(tabs[1].focused);
+ v.interfaces=['wan'];await v.edit(0);const nodes=flatten(view.render.call(v,h));assert(nodes.some(n=>n&&n.tag==='el-option'&&n.data.attrs.value==='lan'));assert(nodes.some(n=>n&&n.data&&n.data.attrs&&n.data.attrs['aria-invalid']==='false'));
 });
