@@ -63,3 +63,13 @@ test('tabs support arrow keys and configured unavailable networks remain selecta
  const v=configured();const tabs=[0,1,2].map(()=>({focus(){this.focused=true}}));v.tabKey({key:'ArrowRight',preventDefault(){},currentTarget:{parentNode:{querySelectorAll(){return tabs}}}},0);assert.equal(v.active,'rules');assert(tabs[1].focused);
  v.interfaces=['wan'];await v.edit(0);const nodes=flatten(view.render.call(v,h));assert(nodes.some(n=>n&&n.tag==='el-option'&&n.data.attrs.value==='lan'));assert(nodes.some(n=>n&&n.data&&n.data.attrs&&n.data.attrs['aria-invalid']==='false'));
 });
+test('duplicate clones rule into isolated draft with distinct id',async()=>{
+ const v=configured();await v.duplicate(0);assert.equal(v.editIndex,-1);assert(v.draft);assert.notEqual(v.draft.id,v.settings.rules[0].id);assert.equal(v.draft.port,53317);assert.match(v.draft.name,/LocalSend/);assert.equal(v.settings.rules.length,1);
+});
+test('ruleSearch preserves original rule indices and logSearch combines with errorsOnly',()=>{
+ const v=configured();
+ v.settings.rules.push({id:'custom',name:'Sonos',enabled:false,protocol:'udp',port:1901,multicast:'239.255.255.250',direction:'bidirectional',network:['lan','guest'],input:[],output:[],log_level:'info'});
+ v.ruleSearch='sonos';assert.equal(v.visibleRules.length,1);assert.equal(v.visibleRules[0].index,1);
+ v.logText='info: ready\nerror: socket failed\nerror: timeout\n';v.logSearch='timeout';assert.equal(v.visibleLogs,'error: timeout');
+ v.errorsOnly=true;v.logSearch='socket';assert.equal(v.visibleLogs,'error: socket failed');
+});
