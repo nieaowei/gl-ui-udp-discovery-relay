@@ -49,7 +49,8 @@ cat > "$build/post-deinstall" <<'HOOK'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] || { nginx -t -q && nginx -s reload; }
 HOOK
-filename="$name-$version-r$release.apk"
+file_version=$(printf '%s' "$version" | tr '~' '-')
+filename="$name-$file_version-r$release.apk"
 "$apk" mkpkg --compat 3.0.0_pre1 --compression deflate:9 \
     --info "name:$name" --info "version:$version-r$release" --info arch:noarch \
     --info "license:$license" --info "origin:$name" --info "depends:$depends" \

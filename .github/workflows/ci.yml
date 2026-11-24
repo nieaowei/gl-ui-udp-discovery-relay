@@ -1,17 +1,54 @@
-name: Native UI checks and package
+name: Build and release APK
+
 on:
   push:
-    branches: ['**']
-    tags: ['v*']
-  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Makefile'
+      - 'files/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'scripts/**'
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: gl-ui-udp-discovery-relay-release
+  cancel-in-progress: false
+
 jobs:
-  test:
+  build:
+    name: Test and build APKv3
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      name: ${{ steps.version.outputs.name }}
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      filename: ${{ steps.version.outputs.filename }}
+      tag: ${{ steps.version.outputs.tag }}
+      project_commit: ${{ steps.version.outputs.project_commit }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test release version resolution
+        run: python3 scripts/test-release-version.py
+      - name: Prepare version with UI commit hash
+        id: version
+        run: python3 scripts/prepare-release.py
+      - name: Test source and version consistency
+        run: |
+          npm test
+          node scripts/check-version.cjs
       - name: Check out pinned Core configuration contract
         uses: actions/checkout@v4
         with:
@@ -19,57 +56,91 @@ jobs:
           ref: 222a804d82d21bd6524e9d774dd57ab5d3eeda7c
           path: .core
           persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm test
-      - run: node scripts/check-version.cjs '${{ github.ref }}'
-      - run: sudo apt-get update -qq && sudo apt-get install -y lua5.1 lua-cjson
+      - name: Install Lua test dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y lua5.1 lua-cjson zstd
       - name: Production Lua syntax and RPC contract
         run: |
           luac5.1 -p files/usr/lib/oui-httpd/rpc/udp-discovery-relay
           luac5.1 -p files/usr/share/gl-validator.d/udp-discovery-relay.lua
           lua5.1 scripts/test-rpc.lua . .core/openwrt/udp-discovery-relay/files/usr/lib/lua/udp-discovery-relay/config.lua
-  apk:
-    needs: test
-    runs-on: ubuntu-24.04
-    env:
-      SDK_URL: https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/openwrt-sdk-25.12.6-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-      SDK_SHA256: 1c04ac47bdfc361d6aab299eb520d570e368013dedcb8d29cf39dc7168ae642e
-      UDR_SDK_LABEL: OpenWrt 25.12.6 reference host packager; UI noarch
-    steps:
-      - uses: actions/checkout@v4
-      - run: sudo apt-get update -qq && sudo apt-get install -y zstd
       - name: Fetch verified SDK host tools
+        env:
+          SDK_URL: https://downloads.openwrt.org/releases/25.12.6/targets/mediatek/filogic/openwrt-sdk-25.12.6-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+          SDK_SHA256: 1c04ac47bdfc361d6aab299eb520d570e368013dedcb8d29cf39dc7168ae642e
         run: |
           curl --fail --location --retry 3 "$SDK_URL" -o /tmp/sdk.tar.zst
           printf '%s  /tmp/sdk.tar.zst\n' "$SDK_SHA256" | sha256sum -c -
           mkdir /tmp/sdk
           tar --zstd -xf /tmp/sdk.tar.zst -C /tmp/sdk --strip-components=1
-      - name: Package independent UI APK
+      - name: Build APK and checksum
+        env:
+          UDR_SDK_LABEL: OpenWrt 25.12.6 reference host packager; UI noarch
         run: sudo env SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" UDR_SDK_LABEL="$UDR_SDK_LABEL" scripts/build-apk.sh /tmp/sdk
-      - name: UI package ownership and dependency preservation
-        run: scripts/test-apk.sh /tmp/sdk
+      - name: Verify APK lifecycle and artifact
+        env:
+          PACKAGE_FILE: ${{ steps.version.outputs.filename }}
+        run: |
+          scripts/test-apk.sh /tmp/sdk
+          test -s "dist/$PACKAGE_FILE"
+          (cd dist && sha256sum -c "$PACKAGE_FILE.sha256")
       - uses: actions/upload-artifact@v4
         with:
-          name: gl-ui-noarch-apk
-          path: dist/
+          name: gl-ui-udp-discovery-relay-apk
+          path: |
+            dist/*.apk
+            dist/*.apk.sha256
+            dist/build-provenance.txt
+            dist/LICENSE
+          if-no-files-found: error
+          retention-days: 7
+
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [test, apk]
+    name: Publish versioned GitHub Release
+    needs: [build]
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: gl-ui-noarch-apk
+          name: gl-ui-udp-discovery-relay-apk
           path: dist
-      - name: Publish UI package
+      - name: Publish this exact build
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          PACKAGE_NAME: ${{ needs.build.outputs.name }}
+          PACKAGE_VERSION: ${{ needs.build.outputs.version }}
+          PACKAGE_RELEASE: ${{ needs.build.outputs.release }}
+          PACKAGE_FILE: ${{ needs.build.outputs.filename }}
+          RELEASE_TAG: ${{ needs.build.outputs.tag }}
+          PROJECT_COMMIT: ${{ needs.build.outputs.project_commit }}
         run: |
-          printf '%s\n' 'Native GL.iNet SDK4 UI. Requires the independent udp-discovery-relay Core package and compatible SDK4 runtime. APK is unsigned; verify provenance and dependencies before installation.' > /tmp/ui-release-notes.md
-          gh release create "$RELEASE_TAG" dist/*.apk dist/*.sha256 dist/build-provenance.txt dist/LICENSE --title "$RELEASE_TAG" --notes-file /tmp/ui-release-notes.md
+          set -euo pipefail
+          file="dist/$PACKAGE_FILE"
+          checksum="$file.sha256"
+          test -s "$file"
+          (cd dist && sha256sum -c "$PACKAGE_FILE.sha256")
+          if existing_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq '.object.sha' 2>/dev/null)"; then
+            if [ "$existing_sha" != "$GITHUB_SHA" ]; then
+              echo "::error::Release $RELEASE_TAG belongs to $existing_sha; refusing to overwrite it with $GITHUB_SHA."
+              exit 1
+            fi
+          fi
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "$file" "$checksum" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" "$file" "$checksum" dist/build-provenance.txt dist/LICENSE \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "$PACKAGE_NAME $PACKAGE_VERSION-r$PACKAGE_RELEASE" \
+              --notes "OpenWrt APKv3 (noarch) built and checksum-verified from UI commit $PROJECT_COMMIT. The package requires the independent udp-discovery-relay Core package and a compatible GL.iNet SDK4 runtime. This package is unsigned at origin."
+          fi
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf "$verify_dir"' EXIT
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern '*.apk' --pattern '*.apk.sha256' --dir "$verify_dir"
+          (cd "$verify_dir" && sha256sum -c ./*.apk.sha256)

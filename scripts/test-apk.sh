@@ -7,7 +7,8 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 apk="$sdk/staging_dir/host/bin/apk"
 version=$(sed -n 's/^PKG_VERSION:=//p' "$root/Makefile")
 release=$(sed -n 's/^PKG_RELEASE:=//p' "$root/Makefile")
-package="$out/gl-ui-udp-discovery-relay-$version-r$release.apk"
+file_version=$(printf '%s' "$version" | tr '~' '-')
+package="$out/gl-ui-udp-discovery-relay-$file_version-r$release.apk"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 "$apk" adbdump "$package" > "$work/metadata"

@@ -1,6 +1,6 @@
 # GL.iNet UDP Discovery Relay UI
 
-GL.iNet SDK4 原生管理插件，版本 **0.0.1**，GPL-3.0-only。通过已认证的管理接口控制独立的 [UDP Discovery Relay Core](https://github.com/nieaowei/udp-discovery-relay)，可单独卸载 UI 而不影响中继服务。
+GL.iNet SDK4 原生管理插件，基础版本 **0.0.1**，GPL-3.0-only。发布版本会附加构建提交的短哈希。通过已认证的管理接口控制独立的 [UDP Discovery Relay Core](https://github.com/nieaowei/udp-discovery-relay)，可单独卸载 UI 而不影响中继服务。
 
 ## 功能与平台
 
@@ -51,7 +51,19 @@ sudo scripts/build-apk.sh /path/to/sdk
 scripts/test-apk.sh /path/to/sdk
 ```
 
-输出为 `noarch` UI APK、校验和、许可证与构建来源记录。CI 验证 root 文件所有权，并在临时根目录检查 UI 安装、删除和依赖文件保留；测试不会执行固件 nginx/procd 钩子。分支提交上传 `gl-ui-noarch-apk` 构建产物，匹配版本的 tag 才触发独立 UI Release。
+输出为 `noarch` UI APK、校验和、许可证与构建来源记录。CI 验证 root 文件所有权，并在临时根目录检查 UI 安装、删除和依赖文件保留；测试不会执行固件 nginx/procd 钩子。直接构建使用 Makefile 的基础版本，发布构建会生成带提交哈希的版本。
+
+## GitHub Release
+
+向 `main` 推送包含软件包内容的提交，或在 GitHub Actions 手动运行 `Build and release APK`，会自动测试、构建并发布 UI。版本取当前提交的前 7 位哈希：
+
+| 用途 | 示例 |
+|---|---|
+| APK 元数据版本 | `0.0.1~abcdef0-r1` |
+| APK 文件名 | `gl-ui-udp-discovery-relay-0.0.1-abcdef0-r1.apk` |
+| Release 标签 | `v0.0.1-r1+abcdef0` |
+
+发布准备由 `scripts/prepare-release.py` 完成。它只在 CI 工作区更新 Makefile 和 UI 内显示的版本，不提交回源码分支。`package.json` 保留基础版本，用于下一次发布计算新的提交哈希。
 
 RPC 契约测试使用已固定提交的 Core 配置模块；CI 将它检出到 `.core/`，只作为测试依赖，不放入 UI 安装包。也可指定已有 Core 源码：
 
