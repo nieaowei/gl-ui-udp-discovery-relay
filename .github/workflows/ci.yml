@@ -38,8 +38,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Install test dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Test release version resolution
         run: python3 scripts/test-release-version.py
       - name: Prepare version with UI commit hash
